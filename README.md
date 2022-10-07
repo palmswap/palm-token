@@ -1,5 +1,5 @@
 # <img src="https://user-images.githubusercontent.com/7713205/194369919-07c76fbb-fe4d-4a1b-9cec-3030c76a4de3.svg" width="23"> PALM Token contracts
-[![Run test](https://github.com/palmswap/palm-token/actions/workflows/test.yml/badge.svg?branch=main&event=push)](https://github.com/palmswap/palm-token/actions/workflows/test.yml)
+[![Tests](https://github.com/palmswap/palm-token/actions/workflows/test.yml/badge.svg?branch=main&event=push)](https://github.com/palmswap/palm-token/actions/workflows/test.yml)
 
 The PALM token is a governance token designed to facilitate and incentivize the decentralized governance of the protocol. The ecosystem is centered around governance, trading rewards, staking, farming and has been developed to fuel the future growth and decentralization of [Palmswap](https://palmswap.org/).
 
