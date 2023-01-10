@@ -12,3 +12,4 @@ coverage
 
 yarn-error.log
 package-lock.json
+.env
