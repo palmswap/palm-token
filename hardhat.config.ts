@@ -1,10 +1,7 @@
 import '@nomiclabs/hardhat-ethers';
 import '@nomiclabs/hardhat-waffle';
-import '@nomiclabs/hardhat-etherscan';
 import '@typechain/hardhat';
-import 'hardhat-deploy';
 import 'solidity-coverage';
-import 'dotenv/config';
 
 export default {
   networks: {

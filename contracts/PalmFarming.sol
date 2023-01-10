@@ -16,7 +16,8 @@ contract PalmFarming is Ownable {
     event Deposited(
         address indexed user,
         address indexed token,
-        uint256 amount
+        uint256 amount,
+        bool fromCooldown
     );
     event Withdrawn(
         address indexed user,
@@ -32,8 +33,7 @@ contract PalmFarming is Ownable {
         address indexed user,
         address indexed poolToken,
         uint256 amount,
-        uint64 expiary,
-        bool isWithdraw
+        uint64 expiary
     );
     event Compounded(
         address indexed user,
@@ -53,9 +53,7 @@ contract PalmFarming is Ownable {
         uint256 rewardDebt;
         uint256 pending;
         uint256 withdrawPendingAmount;
-        uint256 claimPendingAmount;
         uint64 withdrawCooldownExpiary;
-        uint64 claimCooldownExpiary;
     }
 
     struct PoolInfo {
@@ -150,7 +148,11 @@ contract PalmFarming is Ownable {
         _poolInfo.lastRewardBlock = _getBlockNumber();
     }
 
-    function deposit(address token, uint256 amount) external {
+    function deposit(
+        address token,
+        uint256 amount,
+        bool fromCooldown
+    ) external {
         if (amount == 0) {
             revert Errors.ZeroAmount();
         }
@@ -160,10 +162,17 @@ contract PalmFarming is Ownable {
         UserInfo storage _userInfo = userInfo[token][msg.sender];
         _updateUserPending(_poolInfo, _userInfo);
 
-        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        if (fromCooldown) {
+            _userInfo.withdrawPendingAmount -= amount;
+            if (_userInfo.withdrawPendingAmount == 0) {
+                _userInfo.withdrawCooldownExpiary = 0;
+            }
+        } else {
+            IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        }
         _increaseUserDeposits(_poolInfo, _userInfo, amount);
 
-        emit Deposited(msg.sender, token, amount);
+        emit Deposited(msg.sender, token, amount, fromCooldown);
     }
 
     function withdraw(address token, uint256 amount) external {
@@ -200,7 +209,7 @@ contract PalmFarming is Ownable {
                 _poolInfo.cooldownPeriod;
             _userInfo.withdrawCooldownExpiary = expiary;
 
-            emit Cooldown(msg.sender, token, amount, expiary, true);
+            emit Cooldown(msg.sender, token, amount, expiary);
         } else {
             IERC20(token).safeTransfer(msg.sender, amount);
 
@@ -214,19 +223,6 @@ contract PalmFarming is Ownable {
         PoolInfo storage _poolInfo = poolInfo[poolToken];
         UserInfo storage _userInfo = userInfo[poolToken][msg.sender];
 
-        if (
-            _userInfo.claimPendingAmount != 0 &&
-            _userInfo.claimCooldownExpiary <= block.timestamp
-        ) {
-            uint256 pendingAmount = _userInfo.claimPendingAmount;
-            _userInfo.claimPendingAmount = 0;
-            _userInfo.claimCooldownExpiary = 0;
-
-            palmToken.safeTransfer(msg.sender, pendingAmount);
-
-            emit Claimed(msg.sender, poolToken, pendingAmount);
-        }
-
         _updateUserPending(_poolInfo, _userInfo);
         _increaseUserDeposits(_poolInfo, _userInfo, 0);
 
@@ -234,23 +230,13 @@ contract PalmFarming is Ownable {
             amount = _userInfo.pending;
         }
         if (amount == 0) {
-            return;
+            revert Errors.ZeroAmount();
         }
 
         _userInfo.pending -= amount;
-        if (_poolInfo.cooldownPeriod != 0) {
-            _userInfo.claimPendingAmount += amount;
+        palmToken.safeTransfer(msg.sender, amount);
 
-            uint64 expiary = block.timestamp.toUint64() +
-                _poolInfo.cooldownPeriod;
-            _userInfo.claimCooldownExpiary = expiary;
-
-            emit Cooldown(msg.sender, poolToken, amount, expiary, false);
-        } else {
-            palmToken.safeTransfer(msg.sender, amount);
-
-            emit Claimed(msg.sender, poolToken, amount);
-        }
+        emit Claimed(msg.sender, poolToken, amount);
     }
 
     function compound(address token, uint256 amount) external {

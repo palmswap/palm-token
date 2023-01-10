@@ -226,7 +226,7 @@ describe('PalmFarming', () => {
     it('nothing happen if current block time is less than last reward block', async () => {
       await palmFarming
         .connect(alice)
-        .deposit(palmToken.address, utils.parseEther('1'));
+        .deposit(palmToken.address, utils.parseEther('1'), false);
 
       const poolInfoBefore = await palmFarming.poolInfo(palmToken.address);
 
@@ -280,7 +280,7 @@ describe('PalmFarming', () => {
       await advanceBlocks(40);
 
       const amount = utils.parseEther('100');
-      await palmFarming.connect(alice).deposit(lpToken.address, amount);
+      await palmFarming.connect(alice).deposit(lpToken.address, amount, false);
 
       await palmFarming.updatePool(lpToken.address);
 
@@ -314,7 +314,7 @@ describe('PalmFarming', () => {
 
     it('it reverts if amount is zero', async () => {
       await expect(
-        palmFarming.connect(alice).deposit(palmToken.address, 0),
+        palmFarming.connect(alice).deposit(palmToken.address, 0, false),
       ).to.be.revertedWith('ZeroAmount()');
     });
 
@@ -326,7 +326,7 @@ describe('PalmFarming', () => {
 
       const tx = await palmFarming
         .connect(alice)
-        .deposit(palmToken.address, amount);
+        .deposit(palmToken.address, amount, false);
 
       const poolInfo = await palmFarming.poolInfo(palmToken.address);
 
@@ -345,9 +345,7 @@ describe('PalmFarming', () => {
       expect(userInfo.rewardDebt).to.be.equal(0);
       expect(userInfo.pending).to.be.equal(0);
       expect(userInfo.withdrawPendingAmount).to.be.equal(0);
-      expect(userInfo.claimPendingAmount).to.be.equal(0);
       expect(userInfo.withdrawCooldownExpiary).to.be.equal(0);
-      expect(userInfo.claimCooldownExpiary).to.be.equal(0);
 
       expect(await palmToken.balanceOf(palmFarming.address)).to.be.equal(
         amount,
@@ -358,12 +356,14 @@ describe('PalmFarming', () => {
 
       await expect(tx)
         .to.emit(palmFarming, 'Deposited')
-        .withArgs(alice.address, palmToken.address, amount);
+        .withArgs(alice.address, palmToken.address, amount, false);
     });
 
     it('deposit after total deposit exist', async () => {
       const amount0 = utils.parseEther('1');
-      await palmFarming.connect(alice).deposit(palmToken.address, amount0);
+      await palmFarming
+        .connect(alice)
+        .deposit(palmToken.address, amount0, false);
 
       const amount = utils.parseEther('2');
 
@@ -371,7 +371,7 @@ describe('PalmFarming', () => {
 
       const tx = await palmFarming
         .connect(alice)
-        .deposit(palmToken.address, amount);
+        .deposit(palmToken.address, amount, false);
 
       const passedBlocks = (await getCurrentBlock()).sub(mintStartBlock);
       const rewards = passedBlocks.mul(STAKING_REWARD_PER_BLOCK);
@@ -397,9 +397,7 @@ describe('PalmFarming', () => {
       expect(userInfo.rewardDebt).to.be.equal(rewardDebt);
       expect(userInfo.pending).to.be.equal(pending);
       expect(userInfo.withdrawPendingAmount).to.be.equal(0);
-      expect(userInfo.claimPendingAmount).to.be.equal(0);
       expect(userInfo.withdrawCooldownExpiary).to.be.equal(0);
-      expect(userInfo.claimCooldownExpiary).to.be.equal(0);
 
       expect(await palmToken.balanceOf(palmFarming.address)).to.be.equal(
         amount.add(amount0).add(rewards),
@@ -407,7 +405,81 @@ describe('PalmFarming', () => {
 
       await expect(tx)
         .to.emit(palmFarming, 'Deposited')
-        .withArgs(alice.address, palmToken.address, amount);
+        .withArgs(alice.address, palmToken.address, amount, false);
+    });
+
+    it('deposit from cooldown', async () => {
+      const amount = utils.parseEther('2');
+      const cancelCooldownAmount = utils.parseEther('1');
+
+      await palmFarming
+        .connect(alice)
+        .deposit(palmToken.address, amount, false);
+
+      await palmFarming.connect(alice).withdraw(palmToken.address, amount);
+
+      const aliceBalanceBefore = await palmToken.balanceOf(alice.address);
+      const tx = await palmFarming
+        .connect(alice)
+        .deposit(palmToken.address, cancelCooldownAmount, true);
+
+      const poolInfo = await palmFarming.poolInfo(palmToken.address);
+
+      expect(poolInfo.totalDeposits).to.be.equal(cancelCooldownAmount);
+
+      const userInfo = await palmFarming.userInfo(
+        palmToken.address,
+        alice.address,
+      );
+
+      expect(userInfo.amount).to.be.equal(cancelCooldownAmount);
+      expect(userInfo.withdrawPendingAmount).to.be.equal(
+        amount.sub(cancelCooldownAmount),
+      );
+
+      expect(await palmToken.balanceOf(alice.address)).to.be.equal(
+        aliceBalanceBefore,
+      );
+
+      await expect(tx)
+        .to.emit(palmFarming, 'Deposited')
+        .withArgs(alice.address, palmToken.address, cancelCooldownAmount, true);
+    });
+
+    it('set withdraw expiary to zero if cancel all cooldown amount', async () => {
+      const amount = utils.parseEther('2');
+
+      await palmFarming
+        .connect(alice)
+        .deposit(palmToken.address, amount, false);
+
+      await palmFarming.connect(alice).withdraw(palmToken.address, amount);
+
+      const aliceBalanceBefore = await palmToken.balanceOf(alice.address);
+      const tx = await palmFarming
+        .connect(alice)
+        .deposit(palmToken.address, amount, true);
+
+      const poolInfo = await palmFarming.poolInfo(palmToken.address);
+
+      expect(poolInfo.totalDeposits).to.be.equal(amount);
+
+      const userInfo = await palmFarming.userInfo(
+        palmToken.address,
+        alice.address,
+      );
+
+      expect(userInfo.amount).to.be.equal(amount);
+      expect(userInfo.withdrawPendingAmount).to.be.equal(amount.sub(amount));
+      expect(userInfo.withdrawCooldownExpiary).to.be.equal(0);
+
+      expect(await palmToken.balanceOf(alice.address)).to.be.equal(
+        aliceBalanceBefore,
+      );
+
+      await expect(tx)
+        .to.emit(palmFarming, 'Deposited')
+        .withArgs(alice.address, palmToken.address, amount, true);
     });
   });
 
@@ -424,9 +496,11 @@ describe('PalmFarming', () => {
 
       await palmFarming
         .connect(alice)
-        .deposit(palmToken.address, depositAmount);
+        .deposit(palmToken.address, depositAmount, false);
 
-      await palmFarming.connect(alice).deposit(lpToken.address, depositAmount);
+      await palmFarming
+        .connect(alice)
+        .deposit(lpToken.address, depositAmount, false);
       await advanceBlocks(30);
     });
 
@@ -464,9 +538,7 @@ describe('PalmFarming', () => {
       expect(userInfo.rewardDebt).to.be.equal(rewardDebt);
       expect(userInfo.pending).to.be.equal(pending);
       expect(userInfo.withdrawPendingAmount).to.be.equal(0);
-      expect(userInfo.claimPendingAmount).to.be.equal(0);
       expect(userInfo.withdrawCooldownExpiary).to.be.equal(0);
-      expect(userInfo.claimCooldownExpiary).to.be.equal(0);
 
       expect(await lpToken.balanceOf(palmFarming.address)).to.be.equal(
         depositAmount.sub(amount),
@@ -518,9 +590,7 @@ describe('PalmFarming', () => {
       expect(userInfo.rewardDebt).to.be.equal(rewardDebt);
       expect(userInfo.pending).to.be.equal(pending);
       expect(userInfo.withdrawPendingAmount).to.be.equal(amount);
-      expect(userInfo.claimPendingAmount).to.be.equal(0);
       expect(userInfo.withdrawCooldownExpiary).to.be.equal(cooldownExpiary);
-      expect(userInfo.claimCooldownExpiary).to.be.equal(0);
 
       expect(await palmToken.balanceOf(palmFarming.address)).to.be.equal(
         depositAmount.add(rewards),
@@ -531,13 +601,7 @@ describe('PalmFarming', () => {
 
       await expect(tx)
         .to.emit(palmFarming, 'Cooldown')
-        .withArgs(
-          alice.address,
-          palmToken.address,
-          amount,
-          cooldownExpiary,
-          true,
-        );
+        .withArgs(alice.address, palmToken.address, amount, cooldownExpiary);
     });
 
     it('Withdraw cooldown amount first before process', async () => {
@@ -560,8 +624,6 @@ describe('PalmFarming', () => {
       );
 
       expect(userInfo.withdrawPendingAmount).to.be.equal(0);
-      expect(userInfo.claimPendingAmount).to.be.equal(0);
-      expect(userInfo.claimCooldownExpiary).to.be.equal(0);
 
       expect(await palmToken.balanceOf(alice.address)).to.be.equal(
         aliceBalanceBefore.add(amount),
@@ -586,9 +648,11 @@ describe('PalmFarming', () => {
 
       await palmFarming
         .connect(alice)
-        .deposit(palmToken.address, depositAmount);
+        .deposit(palmToken.address, depositAmount, false);
 
-      await palmFarming.connect(alice).deposit(lpToken.address, depositAmount);
+      await palmFarming
+        .connect(alice)
+        .deposit(lpToken.address, depositAmount, false);
       await advanceBlocks(30);
     });
 
@@ -624,9 +688,7 @@ describe('PalmFarming', () => {
       expect(userInfo.rewardDebt).to.be.equal(rewardDebt);
       expect(userInfo.pending).to.be.equal(pending.sub(claimAmount));
       expect(userInfo.withdrawPendingAmount).to.be.equal(0);
-      expect(userInfo.claimPendingAmount).to.be.equal(0);
       expect(userInfo.withdrawCooldownExpiary).to.be.equal(0);
-      expect(userInfo.claimCooldownExpiary).to.be.equal(0);
 
       expect(await lpToken.balanceOf(palmFarming.address)).to.be.equal(
         depositAmount,
@@ -672,9 +734,7 @@ describe('PalmFarming', () => {
       expect(userInfo.rewardDebt).to.be.equal(rewardDebt);
       expect(userInfo.pending).to.be.equal(0);
       expect(userInfo.withdrawPendingAmount).to.be.equal(0);
-      expect(userInfo.claimPendingAmount).to.be.equal(0);
       expect(userInfo.withdrawCooldownExpiary).to.be.equal(0);
-      expect(userInfo.claimCooldownExpiary).to.be.equal(0);
 
       expect(await lpToken.balanceOf(palmFarming.address)).to.be.equal(
         depositAmount,
@@ -688,161 +748,22 @@ describe('PalmFarming', () => {
         .withArgs(alice.address, lpToken.address, pending);
     });
 
-    it('lock for a cooldown period', async () => {
-      const aliceBalanceBefore = await palmToken.balanceOf(alice.address);
-
-      await advanceBlocks(10);
-
-      const claimAmount = utils.parseEther('20');
-
-      const tx = await palmFarming
-        .connect(alice)
-        .claim(palmToken.address, claimAmount);
-
-      const passedBlocks = (await getCurrentBlock()).sub(mintStartBlock);
-      const rewards = passedBlocks.mul(STAKING_REWARD_PER_BLOCK);
-
-      const poolInfo = await palmFarming.poolInfo(palmToken.address);
-
-      const accPalmPerShare = rewards.mul(MULTIPLIER).div(depositAmount);
-      expect(poolInfo.lastRewardBlock).to.be.equal(await getCurrentBlock());
-      expect(poolInfo.totalDeposits).to.be.equal(depositAmount);
-      expect(poolInfo.accPalmPerShare).to.be.equal(accPalmPerShare);
-
-      const userInfo = await palmFarming.userInfo(
-        palmToken.address,
-        alice.address,
-      );
-
-      const pending = accPalmPerShare.mul(depositAmount).div(MULTIPLIER);
-      const rewardDebt = accPalmPerShare.mul(depositAmount).div(MULTIPLIER);
-
-      const cooldownExpiary = (await getCurrentTime()).add(
-        STAKING_COOLDOWN_PERIOD,
-      );
-
-      expect(userInfo.amount).to.be.equal(depositAmount);
-      expect(userInfo.rewardDebt).to.be.equal(rewardDebt);
-      expect(userInfo.pending).to.be.equal(pending.sub(claimAmount));
-      expect(userInfo.withdrawPendingAmount).to.be.equal(0);
-      expect(userInfo.claimPendingAmount).to.be.equal(claimAmount);
-      expect(userInfo.withdrawCooldownExpiary).to.be.equal(0);
-      expect(userInfo.claimCooldownExpiary).to.be.equal(cooldownExpiary);
-
-      expect(await palmToken.balanceOf(palmFarming.address)).to.be.equal(
-        depositAmount.add(rewards),
-      );
-      expect(await palmToken.balanceOf(alice.address)).to.be.equal(
-        aliceBalanceBefore,
-      );
-
-      await expect(tx)
-        .to.emit(palmFarming, 'Cooldown')
-        .withArgs(
-          alice.address,
-          palmToken.address,
-          claimAmount,
-          cooldownExpiary,
-          false,
-        );
-    });
-
-    it('Claim cooldown amount first before process', async () => {
-      const aliceBalanceBefore = await palmToken.balanceOf(alice.address);
-
-      await advanceBlocks(10);
-
-      const claimAmount = utils.parseEther('20');
-
-      await palmFarming.connect(alice).claim(palmToken.address, claimAmount);
-
-      const claimedBlock = await getCurrentBlock();
-      let passedBlocks = claimedBlock.sub(mintStartBlock);
-      let rewards = passedBlocks.mul(STAKING_REWARD_PER_BLOCK);
-      let accPalmPerShare = rewards.mul(MULTIPLIER).div(depositAmount);
-
-      // const pending = accPalmPerShare.mul(depositAmount).div(MULTIPLIER);
-
-      await increaseTime(STAKING_COOLDOWN_PERIOD);
-
-      const claimAmount2 = utils.parseEther('5');
-
-      const tx = await palmFarming
-        .connect(alice)
-        .claim(palmToken.address, claimAmount2);
-
-      passedBlocks = (await getCurrentBlock()).sub(claimedBlock);
-      rewards = passedBlocks.mul(STAKING_REWARD_PER_BLOCK);
-      accPalmPerShare = accPalmPerShare.add(
-        rewards.mul(MULTIPLIER).div(depositAmount),
-      );
-      // const newPending = accPalmPerShare
-      //   .mul(depositAmount)
-      //   .div(MULTIPLIER)
-      //   .sub(pending);
-
-      const userInfo = await palmFarming.userInfo(
-        palmToken.address,
-        alice.address,
-      );
-
-      const cooldownExpiary = (await getCurrentTime()).add(
-        STAKING_COOLDOWN_PERIOD,
-      );
-
-      expect(userInfo.withdrawPendingAmount).to.be.equal(0);
-      expect(userInfo.claimPendingAmount).to.be.equal(claimAmount2);
-      expect(userInfo.claimCooldownExpiary).to.be.equal(cooldownExpiary);
-
-      expect(await palmToken.balanceOf(alice.address)).to.be.equal(
-        aliceBalanceBefore.add(claimAmount),
-      );
-
-      await expect(tx)
-        .to.emit(palmFarming, 'Claimed')
-        .withArgs(alice.address, palmToken.address, claimAmount);
-    });
-
-    it('Do not revert when pending amount is zero', async () => {
-      const aliceBalanceBefore = await palmToken.balanceOf(alice.address);
-
+    it('Revert when pending amount is zero', async () => {
       await advanceBlocks(10);
 
       await palmFarming
         .connect(alice)
         .withdraw(palmToken.address, depositAmount);
 
-      const claimedBlock = await getCurrentBlock();
-      let passedBlocks = claimedBlock.sub(mintStartBlock);
-      let rewards = passedBlocks.mul(STAKING_REWARD_PER_BLOCK);
-      let accPalmPerShare = rewards.mul(MULTIPLIER).div(depositAmount);
-
-      // const pending = accPalmPerShare.mul(depositAmount).div(MULTIPLIER);
-
       const claimAmount = utils.parseEther('20');
 
       await palmFarming.connect(alice).claim(palmToken.address, claimAmount);
 
       await increaseTime(STAKING_COOLDOWN_PERIOD);
 
-      const tx = await palmFarming.connect(alice).claim(palmToken.address, 0);
-
-      const userInfo = await palmFarming.userInfo(
-        palmToken.address,
-        alice.address,
-      );
-
-      expect(userInfo.withdrawPendingAmount).to.be.equal(depositAmount);
-      expect(userInfo.claimPendingAmount).to.be.equal(0);
-      expect(userInfo.claimCooldownExpiary).to.be.equal(0);
-
-      expect(await palmToken.balanceOf(alice.address)).to.be.equal(
-        aliceBalanceBefore.add(claimAmount),
-      );
-
-      await expect(tx)
-        .to.emit(palmFarming, 'Claimed')
-        .withArgs(alice.address, palmToken.address, claimAmount);
+      await expect(
+        palmFarming.connect(alice).claim(palmToken.address, 0),
+      ).to.revertedWith('ZeroAmount()');
     });
   });
 
@@ -859,9 +780,11 @@ describe('PalmFarming', () => {
 
       await palmFarming
         .connect(alice)
-        .deposit(palmToken.address, depositAmount);
+        .deposit(palmToken.address, depositAmount, false);
 
-      await palmFarming.connect(alice).deposit(lpToken.address, depositAmount);
+      await palmFarming
+        .connect(alice)
+        .deposit(lpToken.address, depositAmount, false);
       await advanceBlocks(30);
     });
 
@@ -948,9 +871,7 @@ describe('PalmFarming', () => {
         farmingPending.sub(compoundAmount),
       );
       expect(farmingUserInfo.withdrawPendingAmount).to.be.equal(0);
-      expect(farmingUserInfo.claimPendingAmount).to.be.equal(0);
       expect(farmingUserInfo.withdrawCooldownExpiary).to.be.equal(0);
-      expect(farmingUserInfo.claimCooldownExpiary).to.be.equal(0);
 
       const stakingUserInfo = await palmFarming.userInfo(
         palmToken.address,
@@ -963,9 +884,7 @@ describe('PalmFarming', () => {
       expect(stakingUserInfo.rewardDebt).to.be.equal(stakingRewardDebt);
       expect(stakingUserInfo.pending).to.be.equal(stakingPending);
       expect(stakingUserInfo.withdrawPendingAmount).to.be.equal(0);
-      expect(stakingUserInfo.claimPendingAmount).to.be.equal(0);
       expect(stakingUserInfo.withdrawCooldownExpiary).to.be.equal(0);
-      expect(stakingUserInfo.claimCooldownExpiary).to.be.equal(0);
 
       await expect(tx)
         .to.emit(palmFarming, 'Compounded')
@@ -1039,9 +958,7 @@ describe('PalmFarming', () => {
       expect(farmingUserInfo.rewardDebt).to.be.equal(farmingRewardDebt);
       expect(farmingUserInfo.pending).to.be.equal(0);
       expect(farmingUserInfo.withdrawPendingAmount).to.be.equal(0);
-      expect(farmingUserInfo.claimPendingAmount).to.be.equal(0);
       expect(farmingUserInfo.withdrawCooldownExpiary).to.be.equal(0);
-      expect(farmingUserInfo.claimCooldownExpiary).to.be.equal(0);
 
       const stakingUserInfo = await palmFarming.userInfo(
         palmToken.address,
@@ -1054,9 +971,7 @@ describe('PalmFarming', () => {
       expect(stakingUserInfo.rewardDebt).to.be.equal(stakingRewardDebt);
       expect(stakingUserInfo.pending).to.be.equal(stakingPending);
       expect(stakingUserInfo.withdrawPendingAmount).to.be.equal(0);
-      expect(stakingUserInfo.claimPendingAmount).to.be.equal(0);
       expect(stakingUserInfo.withdrawCooldownExpiary).to.be.equal(0);
-      expect(stakingUserInfo.claimCooldownExpiary).to.be.equal(0);
 
       await expect(tx)
         .to.emit(palmFarming, 'Compounded')
@@ -1111,9 +1026,7 @@ describe('PalmFarming', () => {
         stakingPending.sub(compoundAmount),
       );
       expect(stakingUserInfo.withdrawPendingAmount).to.be.equal(0);
-      expect(stakingUserInfo.claimPendingAmount).to.be.equal(0);
       expect(stakingUserInfo.withdrawCooldownExpiary).to.be.equal(0);
-      expect(stakingUserInfo.claimCooldownExpiary).to.be.equal(0);
 
       await expect(tx)
         .to.emit(palmFarming, 'Compounded')
@@ -1134,9 +1047,11 @@ describe('PalmFarming', () => {
 
       await palmFarming
         .connect(alice)
-        .deposit(palmToken.address, depositAmount);
+        .deposit(palmToken.address, depositAmount, false);
 
-      await palmFarming.connect(alice).deposit(lpToken.address, depositAmount);
+      await palmFarming
+        .connect(alice)
+        .deposit(lpToken.address, depositAmount, false);
       await advanceBlocks(30);
     });
 
